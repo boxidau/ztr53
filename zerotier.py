@@ -9,12 +9,27 @@ from __future__ import unicode_literals
 
 import requests
 import datetime
-import json
 import ipaddress
+import os
 
+API_TOKEN_FILE='~/.zerotier/api_token'
+API_TOKEN_ENVVAR='ZT_API_TOKEN'
+RFC4194_FORMAT='fd{}9993{}'
 
 class ZT(object):
-    def __init__(self, api_key):
+    def __init__(self, api_key=None):
+        if not api_key:
+            api_key = os.getenv(API_TOKEN_ENVVAR, None)
+
+        if not api_key:
+            try:
+                with open(os.path.expanduser(API_TOKEN_FILE)) as token_fp:
+                    api_key = token_fp.read().strip()
+            except FileNotFoundError:
+                raise ZeroTierAuthenticationError(
+                    'ZT api token not supplied and not in {} or envvar {}'.format(
+                        API_TOKEN_FILE, API_TOKEN_ENVVAR
+                    ))
         self.api_key = api_key
         self.api_base = "https://my.zerotier.com/api"
 
@@ -28,7 +43,7 @@ class ZT(object):
                                  data=data)
 
         if response.status_code == 403:
-            raise ZeroTierAuthenticationError()
+            raise ZeroTierAuthenticationError('Incorrect API token supplied, response was HTTP 403')
 
         return response
 
@@ -183,5 +198,5 @@ class Member(object):
     @property
     def rfc4193(self):
         return ipaddress.IPv6Address(
-            int('fd{}9993{}'.format(self.networkId, self.nodeId), 16)
+            int(RFC4194_FORMAT.format(self.networkId, self.nodeId), 16)
         )

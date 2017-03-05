@@ -32,21 +32,12 @@ def cli():
 @click.argument('network_id')
 @click.argument('hosted_zone_id')
 @click.option('--subdomain', default=None, help="DNS names will be name.subdomain.fqdn")
-@click.option('--zt-api-token', envvar='ZT_API_TOKEN', default=None)
 @click.option('--dry-run', default=False, is_flag=True)
-def sync(network_id, hosted_zone_id, subdomain, zt_api_token, dry_run):
+def sync(network_id, hosted_zone_id, subdomain, dry_run):
     if dry_run:
         logger.info('dry run mode is active')
 
-    if not zt_api_token:
-        try:
-            with open(os.path.expanduser('~/.zerotier/api_token')) as token_fp:
-                zt_api_token = token_fp.read().strip()
-        except FileNotFoundError:
-            logger.error('ZT api token could not be found in ~/.zerotier/api_token or envvar or CLI flags')
-            exit(1)
-
-    zt_client = zerotier.ZT(zt_api_token)
+    zt_client = zerotier.ZT()
     logger.debug('Getting network: {}'.format(network_id))
 
     try:
@@ -54,6 +45,8 @@ def sync(network_id, hosted_zone_id, subdomain, zt_api_token, dry_run):
     except zerotier.NetworkNotFoundException:
         logger.error('Network {} not found'.format(network_id))
         exit(1)
+
+    logger.info('Network {}'.format(network))
 
     aws_client = boto3.client('route53')
     try:
@@ -63,8 +56,10 @@ def sync(network_id, hosted_zone_id, subdomain, zt_api_token, dry_run):
         logger.debug(e)
         exit(2)
 
+    logger.info('Route53 hosted zone {} - {}'.format(
+        hosted_zone_id, hosted_zone['HostedZone']['Name']))
+
     changes = []
-    logger.info('Network {}'.format(network))
     for member in network.activeMembers:
         if member.authorized and member.name:
             record_name = '.'.join(filter(None, [
@@ -74,7 +69,7 @@ def sync(network_id, hosted_zone_id, subdomain, zt_api_token, dry_run):
             ]))
 
 
-            logger.info('{}\tA\t\t{}'.format(
+            logger.info('UPSERT {}\tA\t\t{}'.format(
                 record_name,
                 ' '. join(member.ipAssignments)))
 
@@ -90,7 +85,7 @@ def sync(network_id, hosted_zone_id, subdomain, zt_api_token, dry_run):
             })
 
             # IPv6
-            logger.info('{}\tAAAA\t{}'.format(record_name, member.rfc4193))
+            logger.info('UPSERT {}\tAAAA\t{}'.format(record_name, member.rfc4193))
             changes.append({
                 'Action': 'UPSERT',
                 'ResourceRecordSet': {
