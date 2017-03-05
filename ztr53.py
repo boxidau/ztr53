@@ -59,22 +59,26 @@ def sync(network_id, hosted_zone_id, subdomain, dry_run):
     logger.info('Route53 hosted zone {} - {}'.format(
         hosted_zone_id, hosted_zone['HostedZone']['Name']))
 
+    record_suffix = '.'.join(filter(None, [
+        subdomain,
+        hosted_zone['HostedZone']['Name']
+    ]))
+
+    current_records = aws_client.list_resource_record_sets(
+        HostedZoneId=hosted_zone_id,
+        StartRecordName="*.{}".format(record_suffix)
+    )['ResourceRecordSets']
+
     changes = []
     for member in network.activeMembers:
         if member.authorized and member.name:
-            record_name = '.'.join(filter(None, [
+            record_name = '.'.join([
                 member.name,
-                subdomain,
-                hosted_zone['HostedZone']['Name']
-            ]))
-
-
-            logger.info('UPSERT {}\tA\t\t{}'.format(
-                record_name,
-                ' '. join(member.ipAssignments)))
+                record_suffix
+            ])
 
             #IPv4
-            changes.append({
+            change = {
                 'Action': 'UPSERT',
                 'ResourceRecordSet': {
                     'Name': record_name,
@@ -82,11 +86,19 @@ def sync(network_id, hosted_zone_id, subdomain, dry_run):
                     'TTL': 60,
                     'ResourceRecords': [{'Value': ip} for ip in member.ipAssignments]
                 }
-            })
+            }
+            action = 'NO CHANGE'
+            if change['ResourceRecordSet'] not in current_records:
+                action = 'UPSERT'
+                changes.append(change)
+
+            logger.info('{} {}\tA\t\t{}'.format(
+                action,
+                record_name,
+                ' '.join(member.ipAssignments)))
 
             # IPv6
-            logger.info('UPSERT {}\tAAAA\t{}'.format(record_name, member.rfc4193))
-            changes.append({
+            change = {
                 'Action': 'UPSERT',
                 'ResourceRecordSet': {
                     'Name': record_name,
@@ -98,10 +110,20 @@ def sync(network_id, hosted_zone_id, subdomain, dry_run):
                         },
                     ]
                 }
-            })
+            }
+            action = 'NO CHANGE'
+            if change['ResourceRecordSet'] not in current_records:
+                action = 'UPSERT'
+                changes.append(change)
 
-    logger.debug('Sending changeset: {}'.format(json.dumps(changes)))
+            logger.info('{} {}\tAAAA\t{}'.format(action, record_name, member.rfc4193))
+
+    logger.debug('Changeset: {}'.format(json.dumps(changes)))
     logger.info('Sending DNS changeset to route 53')
+
+    if len(changes) == 0:
+        logger.info('No changes in changeset - no changes made')
+        return
 
     if dry_run:
         logger.info('dry run mode - no changes made')
